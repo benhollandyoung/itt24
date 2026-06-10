@@ -1,0 +1,16 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(python3 *)",
+      "Bash(python *)",
+      "Bash(pandoc *)",
+      "WebFetch(domain:luisdamiano.github.io)",
+      "Bash(pip install *)",
+      "Bash(python3 analysis.py)",
+      "Read(//tmp/**)",
+      "Bash(tee /tmp/hmm_per_match_output.txt)",
+      "Bash(A)",
+      "Bash(grep -n \"π\\\\|`A`\" hmm_analysis.md)"
+    ]
+  }
+}
