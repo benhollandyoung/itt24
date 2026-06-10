@@ -66,7 +66,7 @@ for bowler, k in best_k.items():
     sub["Cluster"] = sub["GlobalCluster"]
 
     # Chronological order
-    sub = sub.sort_values(["Match Start Date", "Innings ID", "Over No", "Ball No"])
+    sub = sub.sort_values(["Match Start Date", "Match ID", "Innings ID", "Over No", "Ball No"])
     sub = sub.reset_index(drop=True)
 
     # Combined observed symbol = cluster * 3 + outcome
@@ -76,11 +76,12 @@ for bowler, k in best_k.items():
     obs = sub["Symbol"].to_numpy().reshape(-1, 1)
     n_obs = len(obs)
 
-    # Each match is treated as its own independent sequence: the HMM resets to
-    # its start distribution at the start of every match, and no transition is
-    # modelled across the boundary between two matches. Matches are contiguous
-    # blocks in `sub` because it is sorted chronologically.
-    lengths = sub.groupby("Match ID", sort=False).size().to_numpy()
+    # Each innings is treated as its own independent sequence: the HMM resets
+    # to its start distribution at the start of every innings, and no
+    # transition is modelled across the boundary between two innings (whether
+    # within the same match or across matches). Innings are contiguous blocks
+    # in `sub` because it is sorted chronologically.
+    lengths = sub.groupby(["Match ID", "Innings ID"], sort=False).size().to_numpy()
     assert lengths.sum() == n_obs
 
     # ── Choose number of hidden "strategy" states ─────────────────────────────
@@ -157,11 +158,11 @@ for bowler, k in best_k.items():
         dwell = 1 / (1 - transmat[s, s]) if transmat[s, s] < 1 else np.inf
         print(f"  State {s}: {p*100:.1f}%  (expected dwell ~{dwell:.1f} balls)")
 
-    # Which state does each match start in? (uses startprob_, fit per-match)
-    match_starts = sub["State"].to_numpy()[np.cumsum(lengths) - lengths]
-    print(f"Matches starting in each state: " +
-          ", ".join(f"State {s}={np.sum(match_starts==s)}" for s in range(chosen_n)) +
-          f"  (out of {len(lengths)} matches)")
+    # Which state does each innings start in? (uses startprob_, fit per-innings)
+    innings_starts = sub["State"].to_numpy()[np.cumsum(lengths) - lengths]
+    print(f"Innings starting in each state: " +
+          ", ".join(f"State {s}={np.sum(innings_starts==s)}" for s in range(chosen_n)) +
+          f"  (out of {len(lengths)} innings)")
 
     results[bowler] = dict(
         sub=sub, k=k, chosen_n=chosen_n, bic_scores=bic_scores,
@@ -211,7 +212,7 @@ for ax, bowler in zip(axes, best_k):
     wkt_x = x[sub["Is Wicket"].to_numpy()]
     ax.scatter(wkt_x, sub["State"].to_numpy()[sub["Is Wicket"].to_numpy()],
                marker="*", s=120, color="black", zorder=5, label="Wicket")
-    # Mark match boundaries (each HMM sequence resets here)
+    # Mark innings boundaries (each HMM sequence resets here)
     for boundary in np.cumsum(lengths)[:-1]:
         ax.axvline(boundary, color="gray", linestyle=":", linewidth=0.6, alpha=0.5)
     ax.set_title(bowler, fontweight="bold", loc="left", fontsize=10)
@@ -303,49 +304,51 @@ plt.tight_layout()
 plt.savefig("hmm_cluster_histograms.png", dpi=150, bbox_inches="tight")
 print("Saved hmm_cluster_histograms.png")
 
-# ── Figure 5: state mix per match, in chronological order ────────────────────
+# ── Figure 5: state mix per innings, in chronological order ──────────────────
 fig, axes = plt.subplots(4, 1, figsize=(14, 10), sharex=False)
-fig.suptitle("Hidden-state mix per match (chronological)", fontsize=13, fontweight="bold")
+fig.suptitle("Hidden-state mix per innings (chronological)", fontsize=13, fontweight="bold")
 for ax, bowler in zip(axes, best_k):
     res = results[bowler]
     sub, chosen_n = res["sub"], res["chosen_n"]
 
-    # sub is already sorted chronologically; preserve that match order
-    match_order = sub["Match ID"].drop_duplicates().to_numpy()
-    match_index = {m: i for i, m in enumerate(match_order)}
-    sub["MatchIdx"] = sub["Match ID"].map(match_index)
+    # sub is already sorted chronologically; preserve that innings order
+    innings_order = sub[["Match ID", "Innings ID"]].drop_duplicates().to_numpy()
+    innings_index = {tuple(mi): i for i, mi in enumerate(innings_order)}
+    sub["InningsIdx"] = list(
+        map(innings_index.get, zip(sub["Match ID"], sub["Innings ID"]))
+    )
 
     counts = (
-        sub.groupby(["MatchIdx", "State"]).size()
+        sub.groupby(["InningsIdx", "State"]).size()
         .unstack(fill_value=0)
         .reindex(columns=range(chosen_n), fill_value=0)
-        .reindex(range(len(match_order)), fill_value=0)
+        .reindex(range(len(innings_order)), fill_value=0)
     )
     proportions = counts.div(counts.sum(axis=1), axis=0)
     n_balls = counts.sum(axis=1)
 
-    bottom = np.zeros(len(match_order))
+    bottom = np.zeros(len(innings_order))
     for s in range(chosen_n):
         ax.bar(proportions.index, proportions[s], bottom=bottom, width=0.85,
                color=state_colors[s], label=f"State {s}")
         bottom += proportions[s].to_numpy()
 
-    # annotate number of balls bowled in each match
+    # annotate number of balls bowled in each innings
     for i, n in enumerate(n_balls):
         if n > 0:
             ax.text(i, 1.02, str(n), ha="center", va="bottom", fontsize=6, color="gray")
 
     ax.set_title(bowler, fontweight="bold", loc="left", fontsize=10)
-    ax.set_xlim(-0.6, len(match_order) - 0.4)
+    ax.set_xlim(-0.6, len(innings_order) - 0.4)
     ax.set_ylim(0, 1.15)
     ax.set_yticks([0, 0.5, 1])
     ax.set_ylabel("State share")
     if bowler == "M Morkel":
         ax.legend(fontsize=8, loc="upper right", ncol=chosen_n)
-axes[-1].set_xlabel("Match number (chronological; label = balls bowled in that match)")
+axes[-1].set_xlabel("Innings number (chronological; label = balls bowled in that innings)")
 plt.tight_layout()
-plt.savefig("hmm_match_states.png", dpi=150, bbox_inches="tight")
-print("Saved hmm_match_states.png")
+plt.savefig("hmm_innings_states.png", dpi=150, bbox_inches="tight")
+print("Saved hmm_innings_states.png")
 
 # ── Figure 6: state mix and outcomes, home vs away ────────────────────────────
 fig, axes = plt.subplots(2, 4, figsize=(16, 7))

@@ -9,7 +9,7 @@ from sklearn.preprocessing import MinMaxScaler, StandardScaler
 
 import cluster_defs as CD
 
-# Reuses the data prep, clustering and per-match HMM fits from hmm_analysis.py
+# Reuses the data prep, clustering and per-innings HMM fits from hmm_analysis.py
 # (importing re-runs that script, regenerating its figures too).
 import hmm_analysis as H
 
@@ -21,7 +21,7 @@ mms = MinMaxScaler().fit(H.df_clean[H.features].values)
 n_feat = len(H.features)
 angles = [a / n_feat * 2 * pi for a in range(n_feat)] + [0]
 
-MATCHES_PER_PAGE = 6
+INNINGS_PER_PAGE = 6
 
 print("\n=== Generating per-bowler strategy summary PDFs ===")
 
@@ -34,7 +34,7 @@ for bowler, k in H.best_k.items():
     names = CD.cluster_names(bowler)  # {c: (label e.g. "O0", expert name)}
     label_of = lambda c: f"{names[c][0]} {names[c][1]}"
     tick_labels = [f"{names[c][0]}\n{names[c][1]}" for c in range(k)]
-    # Short codes only, for the cramped per-match bar-chart x-axis (page 2+);
+    # Short codes only, for the cramped per-innings bar-chart x-axis (page 2+);
     # full names are given in the page-1 legend/heatmap.
     short_labels = [names[c][0] for c in range(k)]
 
@@ -42,8 +42,8 @@ for bowler, k in H.best_k.items():
     sizes = sub.groupby("Cluster").size()
     wkt = sub.groupby("Cluster")["Is Wicket"].mean()
 
-    match_order = sub["Match ID"].drop_duplicates().to_numpy()
-    n_matches = len(match_order)
+    innings_order = sub[["Match ID", "Innings ID"]].drop_duplicates().to_numpy()
+    n_innings = len(innings_order)
 
     fname = f"hmm_summary_{bowler.replace(' ', '_')}"
     with PdfPages(f"{fname}.pdf") as pdf:
@@ -104,18 +104,18 @@ for bowler, k in H.best_k.items():
         plt.savefig(f"{fname}_page1.png", dpi=130, bbox_inches="tight")
         plt.close(fig1)
 
-        # ── Pages 2+: per-match strategy mix, a few matches per page ─────────
+        # ── Pages 2+: per-innings strategy mix, a few innings per page ───────
         bar_width = 0.8 / chosen_n
         x = np.arange(k)
-        n_pages = math.ceil(n_matches / MATCHES_PER_PAGE)
+        n_pages = math.ceil(n_innings / INNINGS_PER_PAGE)
 
         for p in range(n_pages):
-            chunk = match_order[p * MATCHES_PER_PAGE:(p + 1) * MATCHES_PER_PAGE]
+            chunk = innings_order[p * INNINGS_PER_PAGE:(p + 1) * INNINGS_PER_PAGE]
             n_rows = len(chunk)
 
             fig2 = plt.figure(figsize=(14, 2.6 * n_rows + 1.6))
             fig2.suptitle(
-                f"{bowler} — per-match strategy mix (page {p + 1} of {n_pages})",
+                f"{bowler} — per-innings strategy mix (page {p + 1} of {n_pages})",
                 fontsize=15, fontweight="bold", y=0.99,
             )
             axes = fig2.subplots(n_rows, 2, gridspec_kw={"width_ratios": [3, 1.3]})
@@ -130,13 +130,11 @@ for bowler, k in H.best_k.items():
                         ncol=chosen_n, fontsize=11)
             fig2.text(0.985, 0.965, "★ = wicket", ha="right", va="center", fontsize=10)
 
-            for row, m in enumerate(chunk):
-                i = p * MATCHES_PER_PAGE + row
+            for row, (m, inn) in enumerate(chunk):
+                i = p * INNINGS_PER_PAGE + row
                 ax, ax2 = axes[row, 0], axes[row, 1]
-                msub = sub[sub["Match ID"] == m].reset_index(drop=True)
+                msub = sub[(sub["Match ID"] == m) & (sub["Innings ID"] == inn)].reset_index(drop=True)
                 date = pd.to_datetime(msub["Match Start Date"].iloc[0]).date()
-                innings_ids = sorted(msub["Innings ID"].unique())
-                innings_str = ", ".join(str(x) for x in innings_ids)
 
                 # Left: delivery-type mix within each decoded state
                 for s in range(chosen_n):
@@ -152,7 +150,7 @@ for bowler, k in H.best_k.items():
                 ax.set_ylim(0, 1)
                 ax.set_yticks([0, 0.5, 1])
                 ax.set_yticklabels(["0", "0.5", "1"], fontsize=9)
-                ax.set_ylabel(f"Match {i+1}\n{date}\nMatch ID {m}\nInnings {innings_str}",
+                ax.set_ylabel(f"Innings {i+1}\n{date}\nMatch ID {m}\nInnings ID {inn}",
                                fontsize=10, rotation=0, ha="right",
                                va="center", labelpad=12)
                 ax.tick_params(axis="x", which="both", length=0)
@@ -161,7 +159,7 @@ for bowler, k in H.best_k.items():
                     ax.set_title("Delivery-type mix per state "
                                   "(see page 1 for cluster names)", fontsize=12, pad=10)
 
-                # Right: ball-by-ball decoded state, in chronological order (this match only)
+                # Right: ball-by-ball decoded state, in chronological order (this innings only)
                 xs = np.arange(len(msub))
                 states_arr = msub["State"].to_numpy()
                 for s in range(chosen_n):
@@ -175,9 +173,9 @@ for bowler, k in H.best_k.items():
                 ax2.set_ylim(-0.5, chosen_n - 0.5)
                 ax2.set_xlim(-0.5, max(len(msub) - 0.5, 0.5))
                 ax2.tick_params(axis="both", labelsize=9)
-                ax2.set_xlabel("Ball number in match", fontsize=9)
+                ax2.set_xlabel("Ball number in innings", fontsize=9)
                 if row == 0:
-                    ax2.set_title("Ball-by-ball state (this match)", fontsize=12, pad=10)
+                    ax2.set_title("Ball-by-ball state (this innings)", fontsize=12, pad=10)
 
             pdf.savefig(fig2, bbox_inches="tight")
             if p == 0:
