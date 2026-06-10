@@ -10,7 +10,8 @@
       "Read(//tmp/**)",
       "Bash(tee /tmp/hmm_per_match_output.txt)",
       "Bash(A)",
-      "Bash(grep -n \"π\\\\|`A`\" hmm_analysis.md)"
+      "Bash(grep -n \"π\\\\|`A`\" hmm_analysis.md)",
+      "Bash(git add *)"
     ]
   }
 }

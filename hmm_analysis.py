@@ -83,15 +83,23 @@ for bowler, k in best_k.items():
     lengths = sub.groupby("Match ID", sort=False).size().to_numpy()
     assert lengths.sum() == n_obs
 
-    # ── Choose number of hidden "strategy" states via BIC ─────────────────────
+    # ── Choose number of hidden "strategy" states ─────────────────────────────
+    # BIC is computed for n_states = 2..5 for reference, but we deliberately
+    # use n_states=5 ("five strategies") regardless of what BIC prefers — BIC
+    # consistently favours 2 states on this sample size, but 2 states mostly
+    # just recovers the over/round-the-wicket split (see hmm_analysis.md
+    # caveats). 5 states is used here to look for finer-grained strategy
+    # structure within each side, at the cost of some states being supported
+    # by very few deliveries.
+    FORCE_N_STATES = 5
     bic_scores = {}
     fitted_models = {}
-    for n_states in [2, 3, 4]:
+    for n_states in [2, 3, 4, 5]:
         best_ll, best_model = -np.inf, None
-        for seed in range(10):
+        for seed in range(15):
             model = CategoricalHMM(
                 n_components=n_states, n_features=n_symbols,
-                random_state=seed, n_iter=200, tol=1e-4,
+                random_state=seed, n_iter=300, tol=1e-4,
             )
             model.fit(obs, lengths)
             ll = model.score(obs, lengths)
@@ -102,7 +110,7 @@ for bowler, k in best_k.items():
         bic_scores[n_states] = bic
         fitted_models[n_states] = (best_model, best_ll)
 
-    chosen_n = min(bic_scores, key=bic_scores.get)
+    chosen_n = FORCE_N_STATES
     model, ll = fitted_models[chosen_n]
 
     # ── Decode hidden states (per-match, via lengths), relabel by "aggression score" ──
@@ -131,7 +139,8 @@ for bowler, k in best_k.items():
 
     print(f"\n{'='*60}\n{bowler} (n={n_obs}, k_clusters={k})\n{'='*60}")
     print("BIC by n_states:", {ns: round(b, 1) for ns, b in bic_scores.items()},
-          f"-> chosen n_states={chosen_n}")
+          f"-> using n_states={chosen_n} (fixed; BIC would prefer "
+          f"{min(bic_scores, key=bic_scores.get)})")
     print("Transition matrix (relabelled, low->high aggression):")
     print(np.round(transmat, 3))
     print("Start probabilities:", np.round(startprob, 3))
@@ -163,7 +172,7 @@ for bowler, k in best_k.items():
 
 # ── Figure 1: BIC vs n_states ────────────────────────────────────────────────
 fig, axes = plt.subplots(1, 4, figsize=(16, 3.5))
-fig.suptitle("Choosing the number of hidden strategy states (lower BIC = better)",
+fig.suptitle("BIC vs number of hidden strategy states (n_states=5 used despite BIC minimum)",
               fontsize=12, fontweight="bold")
 for ax, bowler in zip(axes, best_k):
     bic_scores = results[bowler]["bic_scores"]
@@ -171,7 +180,9 @@ for ax, bowler in zip(axes, best_k):
     vals = list(bic_scores.values())
     ax.plot(ns, vals, marker="o", color="steelblue")
     chosen = results[bowler]["chosen_n"]
-    ax.axvline(chosen, color="darkorange", linestyle="--", alpha=0.6, label=f"chosen n={chosen}")
+    bic_best = min(bic_scores, key=bic_scores.get)
+    ax.axvline(bic_best, color="seagreen", linestyle=":", alpha=0.6, label=f"BIC min n={bic_best}")
+    ax.axvline(chosen, color="darkorange", linestyle="--", alpha=0.6, label=f"used n={chosen}")
     ax.set_title(bowler, fontweight="bold")
     ax.set_xlabel("n_states")
     ax.set_xticks(ns)
@@ -184,7 +195,7 @@ plt.savefig("hmm_state_selection.png", dpi=150, bbox_inches="tight")
 print("\nSaved hmm_state_selection.png")
 
 # ── Figure 2: hidden state timelines ─────────────────────────────────────────
-state_colors = ["#2196F3", "#FF9800", "#F44336", "#9C27B0"]
+state_colors = ["#2196F3", "#FF9800", "#F44336", "#9C27B0", "#4CAF50"]
 
 fig, axes = plt.subplots(4, 1, figsize=(14, 9), sharex=False)
 fig.suptitle("Decoded hidden 'strategy' state through each bowler's deliveries (chronological)",
