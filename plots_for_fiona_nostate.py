@@ -13,15 +13,15 @@ import cluster_defs as CD
 import hmm_analysis as H
 
 INNINGS_PER_PAGE = 6
-OUT_DIR = "Plots for Fiona/With state colouring"
+OUT_DIR = "Plots for Fiona/Without state colouring"
 os.makedirs(OUT_DIR, exist_ok=True)
 
-print("\n=== Generating per-innings delivery-type/state plots for Fiona ===")
+print("\n=== Generating per-innings delivery-type plots for Fiona (no state colouring) ===")
 
 for bowler, k in H.best_k.items():
     res = H.results[bowler]
     sub = res["sub"]
-    chosen_n = res["chosen_n"]
+
     names = CD.cluster_names(bowler)
     y_labels = [f"{names[c][0]} {names[c][1]}" for c in range(k)]
 
@@ -37,14 +37,14 @@ for bowler, k in H.best_k.items():
 
             fig, axes = plt.subplots(n_rows, 1, figsize=(12, 2.4 * n_rows + 1.4), squeeze=False)
             fig.suptitle(
-                f"{bowler} — delivery type vs decoded state, ball-by-ball per innings (page {p + 1} of {n_pages})",
+                f"{bowler} — delivery type, ball-by-ball per innings (page {p + 1} of {n_pages})",
                 fontsize=14, fontweight="bold", y=0.995,
             )
-            state_patches = [mpatches.Patch(color=H.state_colors[s], label=f"State {s}")
-                              for s in range(chosen_n)]
-            fig.legend(handles=state_patches + [plt.Line2D([0], [0], marker="*", color="w",
+            fig.legend(handles=[plt.Line2D([0], [0], marker="o", color="w",
+                       markerfacecolor="#2196F3", markersize=8, label="Delivery"),
+                       plt.Line2D([0], [0], marker="*", color="w",
                        markerfacecolor="black", markersize=12, label="Wicket")],
-                       loc="upper right", ncol=chosen_n + 1, fontsize=9, bbox_to_anchor=(1.0, 0.99))
+                       loc="upper right", ncol=2, fontsize=9, bbox_to_anchor=(1.0, 0.99))
 
             for row, (m, inn) in enumerate(chunk):
                 i = p * INNINGS_PER_PAGE + row
@@ -54,10 +54,7 @@ for bowler, k in H.best_k.items():
 
                 xs = np.arange(len(msub))
                 clusters = msub["Cluster"].to_numpy()
-                states = msub["State"].to_numpy()
-                for s in range(chosen_n):
-                    mask = states == s
-                    ax.scatter(xs[mask], clusters[mask], color=H.state_colors[s], s=30, zorder=3)
+                ax.scatter(xs, clusters, color="#2196F3", s=30, zorder=3)
 
                 wkt_mask = msub["Is Wicket"].to_numpy()
                 if wkt_mask.any():
