@@ -46,14 +46,18 @@ df_clean = df[features + extra_cols].dropna(subset=features).copy()
 df_clean = df_clean[df_clean["Release Speed"] >= 75].copy()
 
 # ── Outcome category: 0=Dot, 1=Runs off bat, 2=Chance, 3=Wicket ──────────────
-# A "chance" is a delivery the bowler beat the bat or found an edge on
-# (Ball Events contains "Edge" or "Catch Chance"), but which didn't result
-# in a wicket this time - i.e. the batter could easily have been out.
+# A "chance" is a delivery the bowler beat the bat, found an edge, or got an
+# appeal on (Ball Events contains "Edge", "Catch Chance", "Play and Miss" or
+# "Appeal"), but which didn't result in a wicket this time - i.e. the batter
+# could easily have been out.
+CHANCE_KEYWORDS = ["Edge", "Catch Chance", "Play and Miss", "Appeal"]
+
+
 def outcome_cat(row):
     if row["Is Wicket"]:
         return 3
     events = row["Ball Events"] if pd.notna(row["Ball Events"]) else ""
-    if "Edge" in events or "Catch Chance" in events:
+    if any(kw in events for kw in CHANCE_KEYWORDS):
         return 2
     if row["Bowler Runs Conceded"] == 0:
         return 0
@@ -74,6 +78,25 @@ for bowler, k in best_k.items():
     # Chronological order
     sub = sub.sort_values(["Match Start Date", "Match ID", "Innings ID", "Over No", "Ball No"])
     sub = sub.reset_index(drop=True)
+
+    # ── Dot-ball "pressure" streak ────────────────────────────────────────────
+    # Number of consecutive Dot-outcome (Outcome==0) deliveries up to and
+    # including the current ball; resets to 0 on any other outcome (Runs,
+    # Chance, Wicket). Reset at the start of every innings, like everything
+    # else here. This is a descriptive metric only - it is not part of the
+    # HMM's emission alphabet (the raw streak goes up to ~20, far too many
+    # categories to add), but is reported per decoded state below.
+    def dot_streaks(group):
+        streak, out = 0, []
+        for o in group["Outcome"]:
+            streak = streak + 1 if o == 0 else 0
+            out.append(streak)
+        return pd.Series(out, index=group.index)
+
+    sub["DotStreak"] = (
+        sub.groupby(["Match ID", "Innings ID"], sort=False, group_keys=False)
+        .apply(dot_streaks)
+    )
 
     # Combined observed symbol = cluster * 4 + outcome
     n_outcomes = 4
@@ -171,11 +194,15 @@ for bowler, k in best_k.items():
           ", ".join(f"State {s}={np.sum(innings_starts==s)}" for s in range(chosen_n)) +
           f"  (out of {len(lengths)} innings)")
 
+    mean_streak = sub.groupby("State")["DotStreak"].mean().reindex(range(chosen_n), fill_value=0.0)
+    print("Mean dot-ball streak length by state:",
+          ", ".join(f"State {s}={v:.1f}" for s, v in mean_streak.items()))
+
     results[bowler] = dict(
         sub=sub, k=k, chosen_n=chosen_n, bic_scores=bic_scores,
         transmat=transmat, startprob=startprob, lengths=lengths,
         p_outcome=p_outcome_given_state, p_cluster=p_cluster_given_state,
-        ll=ll,
+        ll=ll, mean_streak=mean_streak,
     )
 
 # ── Figure 1: BIC vs n_states ────────────────────────────────────────────────
@@ -419,3 +446,23 @@ for bowler in best_k:
     for venue in ["Home", "Away"]:
         states_str = ", ".join(f"State {s}={state_props.loc[venue, s]*100:.0f}%" for s in range(chosen_n))
         print(f"  {venue} (n={n[venue]}): {states_str}, wicket rate={wkt_rate[venue]*100:.1f}%")
+
+# ── Figure 7: mean dot-ball "pressure" streak by hidden state ────────────────
+fig, axes = plt.subplots(1, 4, figsize=(16, 3.5), sharey=False)
+fig.suptitle("Mean dot-ball pressure streak by hidden state\n"
+              "(consecutive Dot-outcome deliveries up to and including this ball, reset to 0 otherwise)",
+              fontsize=12, fontweight="bold")
+for ax, bowler in zip(axes, best_k):
+    res = results[bowler]
+    chosen_n, mean_streak = res["chosen_n"], res["mean_streak"]
+    ax.bar(range(chosen_n), mean_streak.values, color=[state_colors[s] for s in range(chosen_n)])
+    for s, v in enumerate(mean_streak.values):
+        ax.text(s, v, f"{v:.1f}", ha="center", va="bottom", fontsize=9)
+    ax.set_xticks(range(chosen_n))
+    ax.set_xticklabels([f"S{s}" for s in range(chosen_n)])
+    ax.set_title(bowler, fontweight="bold", fontsize=10)
+    if bowler == "M Morkel":
+        ax.set_ylabel("Mean dot-ball streak")
+plt.tight_layout()
+plt.savefig("hmm_dot_streaks.png", dpi=150, bbox_inches="tight")
+print("Saved hmm_dot_streaks.png")
