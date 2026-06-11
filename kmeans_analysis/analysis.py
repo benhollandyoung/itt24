@@ -9,7 +9,7 @@ from math import pi
 
 import cluster_defs as CD
 
-df = pd.read_excel("Test_Wicket_Match_Ups.xlsx")
+df = pd.read_excel("../data/Test_Wicket_Match_Ups.xlsx")
 
 # ── EDA ──────────────────────────────────────────────────────────────────────
 

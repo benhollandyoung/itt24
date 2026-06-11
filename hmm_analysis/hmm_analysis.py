@@ -1,11 +1,14 @@
+import sys
+import os
 import pandas as pd
 import numpy as np
 from hmmlearn.hmm import CategoricalHMM
 import matplotlib.pyplot as plt
 
+sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "kmeans_analysis"))
 import cluster_defs as CD
 
-df = pd.read_excel("Test_Wicket_Match_Ups.xlsx")
+df = pd.read_excel("../data/Test_Wicket_Match_Ups.xlsx")
 
 # ── Same per-bowler delivery-type clusters as analysis.py ────────────────────
 # The "ball cluster" feeding the HMM is the *same* over/round-split clustering

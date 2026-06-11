@@ -1,3 +1,4 @@
+import sys
 import math
 import os
 import numpy as np
@@ -6,6 +7,7 @@ import matplotlib.pyplot as plt
 import matplotlib.patches as mpatches
 from matplotlib.backends.backend_pdf import PdfPages
 
+sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "kmeans_analysis"))
 import cluster_defs as CD
 
 # Reuses the data prep, clustering and per-innings HMM fits from hmm_analysis.py
@@ -13,7 +15,7 @@ import cluster_defs as CD
 import hmm_analysis as H
 
 INNINGS_PER_PAGE = 6
-OUT_DIR = "Plots for Fiona/With state colouring"
+OUT_DIR = "../Plots for Fiona/With state colouring"
 os.makedirs(OUT_DIR, exist_ok=True)
 
 print("\n=== Generating per-innings delivery-type/state plots for Fiona ===")

@@ -1,3 +1,5 @@
+import sys
+import os
 import math
 import numpy as np
 import pandas as pd
@@ -7,6 +9,7 @@ from matplotlib.backends.backend_pdf import PdfPages
 from math import pi
 from sklearn.preprocessing import MinMaxScaler, StandardScaler
 
+sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "kmeans_analysis"))
 import cluster_defs as CD
 
 # Reuses the data prep, clustering and per-innings HMM fits from hmm_analysis.py
