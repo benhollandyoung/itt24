@@ -18,7 +18,7 @@ best_k = {bowler: CD.total_k(bowler) for bowler in CD.side_config}
 
 extra_cols = [
     "Bowler Name", "Match ID", "Match Start Date", "Innings ID", "Over No", "Ball No",
-    "Is Wicket", "Bowler Runs Conceded", "Home/Away",
+    "Is Wicket", "Bowler Runs Conceded", "Home/Away", "Fielder Action",
 ]
 
 # ── Home/away: fill gaps in the Ashes matches via Ground Country ─────────────
@@ -45,16 +45,24 @@ df["Home/Away"] = df.apply(bowling_home_away, axis=1)
 df_clean = df[features + extra_cols].dropna(subset=features).copy()
 df_clean = df_clean[df_clean["Release Speed"] >= 75].copy()
 
-# ── Outcome category: 0=Dot, 1=Runs off bat, 2=Wicket ─────────────────────────
+# ── Outcome category: 0=Dot, 1=Runs off bat, 2=Chance, 3=Wicket ──────────────
+# A "chance" is a delivery where a wicket should have happened but didn't -
+# a dropped catch, missed run-out or keeper error (Is Wicket is False for
+# all of these). These are rare (0-4 per bowler) but worth distinguishing
+# from an ordinary non-wicket ball.
+chance_actions = {"Dropped Catch", "Run Out Chance", "Keeper Error"}
+
 def outcome_cat(row):
     if row["Is Wicket"]:
+        return 3
+    if row["Fielder Action"] in chance_actions:
         return 2
     if row["Bowler Runs Conceded"] == 0:
         return 0
     return 1
 
 df_clean["Outcome"] = df_clean.apply(outcome_cat, axis=1)
-outcome_labels = ["Dot", "Runs", "Wicket"]
+outcome_labels = ["Dot", "Runs", "Chance", "Wicket"]
 
 # ── Per-bowler: cluster, order chronologically, fit HMM ──────────────────────
 results = {}
@@ -69,8 +77,8 @@ for bowler, k in best_k.items():
     sub = sub.sort_values(["Match Start Date", "Match ID", "Innings ID", "Over No", "Ball No"])
     sub = sub.reset_index(drop=True)
 
-    # Combined observed symbol = cluster * 3 + outcome
-    n_outcomes = 3
+    # Combined observed symbol = cluster * 4 + outcome
+    n_outcomes = 4
     sub["Symbol"] = sub["Cluster"] * n_outcomes + sub["Outcome"]
     n_symbols = k * n_outcomes
     obs = sub["Symbol"].to_numpy().reshape(-1, 1)
@@ -126,7 +134,8 @@ for bowler, k in best_k.items():
             p_cluster_given_state[s, c] += emission[s, sym]
             p_outcome_given_state[s, o] += emission[s, sym]
 
-    aggression = p_outcome_given_state[:, 2] * 10 + p_outcome_given_state[:, 1]
+    aggression = (p_outcome_given_state[:, 3] * 10 + p_outcome_given_state[:, 2] * 5
+                  + p_outcome_given_state[:, 1])
     order = np.argsort(aggression)
     relabel = {old: new for new, old in enumerate(order)}
     states = np.array([relabel[s] for s in states_raw])
@@ -253,12 +262,12 @@ for col, bowler in enumerate(best_k):
 
     ax2 = axes[1, col]
     im2 = ax2.imshow(res["p_outcome"], cmap="Reds", aspect="auto", vmin=0, vmax=1)
-    ax2.set_xticks(range(3))
+    ax2.set_xticks(range(len(outcome_labels)))
     ax2.set_xticklabels(outcome_labels, fontsize=8)
     ax2.set_yticks(range(chosen_n))
     ax2.set_yticklabels([f"State {s}" for s in range(chosen_n)], fontsize=8)
     for s in range(chosen_n):
-        for o in range(3):
+        for o in range(len(outcome_labels)):
             v = res["p_outcome"][s, o]
             ax2.text(o, s, f"{v:.2f}", ha="center", va="center", fontsize=7,
                      color="white" if v > 0.6 else "black")
