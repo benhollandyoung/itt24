@@ -59,12 +59,13 @@ def outcome_cat(row):
     events = row["Ball Events"] if pd.notna(row["Ball Events"]) else ""
     if any(kw in events for kw in CHANCE_KEYWORDS):
         return 2
-    if row["Bowler Runs Conceded"] == 0:
-        return 0
-    return 1
+    if row["Bowler Runs Conceded"] != 0:
+        return 1
+    return 0
 
 df_clean["Outcome"] = df_clean.apply(outcome_cat, axis=1)
 outcome_labels = ["Dot", "Runs", "Chance", "Wicket"]
+streak_labels = ["Low pressure (0-1 prior dots)", "High pressure (2+ prior dots)"]
 
 # ── Per-bowler: cluster, order chronologically, fit HMM ──────────────────────
 results = {}
@@ -83,9 +84,7 @@ for bowler, k in best_k.items():
     # Number of consecutive Dot-outcome (Outcome==0) deliveries up to and
     # including the current ball; resets to 0 on any other outcome (Runs,
     # Chance, Wicket). Reset at the start of every innings, like everything
-    # else here. This is a descriptive metric only - it is not part of the
-    # HMM's emission alphabet (the raw streak goes up to ~20, far too many
-    # categories to add), but is reported per decoded state below.
+    # else here. Reported descriptively per decoded state below (Figure 7).
     def dot_streaks(group):
         streak, out = 0, []
         for o in group["Outcome"]:
@@ -98,10 +97,26 @@ for bowler, k in best_k.items():
         .apply(dot_streaks)
     )
 
-    # Combined observed symbol = cluster * 4 + outcome
+    # ── Pressure entering this ball, for the emission alphabet ───────────────
+    # PressureStreak = the dot-streak *before* this ball (i.e. how many
+    # consecutive dots were just bowled walking into this delivery), reset to
+    # 0 at the start of each innings. Binned into "low" (0-1 prior dots) vs
+    # "high" (2+ prior dots) and combined with the 4 outcome categories, so
+    # the model can see e.g. "after building pressure, this ball was a
+    # Chance/Wicket" as part of a state's emission profile.
+    sub["PressureStreak"] = (
+        sub.groupby(["Match ID", "Innings ID"], sort=False)["DotStreak"]
+        .shift(1).fillna(0).astype(int)
+    )
+    sub["StreakBin"] = (sub["PressureStreak"] >= 2).astype(int)
+
+    # Combined observed symbol = cluster * (n_outcomes * n_streak_bins) + (outcome * n_streak_bins + streak_bin)
     n_outcomes = 4
-    sub["Symbol"] = sub["Cluster"] * n_outcomes + sub["Outcome"]
-    n_symbols = k * n_outcomes
+    n_streak_bins = 2
+    n_outcome_streak = n_outcomes * n_streak_bins
+    sub["OutcomeStreak"] = sub["Outcome"] * n_streak_bins + sub["StreakBin"]
+    sub["Symbol"] = sub["Cluster"] * n_outcome_streak + sub["OutcomeStreak"]
+    n_symbols = k * n_outcome_streak
     obs = sub["Symbol"].to_numpy().reshape(-1, 1)
     n_obs = len(obs)
 
@@ -115,13 +130,14 @@ for bowler, k in best_k.items():
 
     # ── Choose number of hidden "strategy" states ─────────────────────────────
     # BIC is computed for n_states = 2..5 for reference, but we deliberately
-    # use n_states=5 ("five strategies") regardless of what BIC prefers — BIC
-    # consistently favours 2 states on this sample size, but 2 states mostly
-    # just recovers the over/round-the-wicket split (see hmm_analysis.md
-    # caveats). 5 states is used here to look for finer-grained strategy
-    # structure within each side, at the cost of some states being supported
-    # by very few deliveries.
-    FORCE_N_STATES = 5
+    # use n_states=4 regardless of what BIC prefers — BIC consistently favours
+    # 2 states on this sample size, but 2 states mostly just recovers the
+    # over/round-the-wicket split (see hmm_analysis.md caveats). 4 (rather
+    # than 5, as in earlier versions) is used here because adding the
+    # pressure-streak dimension to the emission alphabet roughly doubles its
+    # size, so a slightly smaller number of states is used to keep the
+    # parameter count more manageable.
+    FORCE_N_STATES = 4
     bic_scores = {}
     fitted_models = {}
     for n_states in [2, 3, 4, 5]:
@@ -149,11 +165,15 @@ for bowler, k in best_k.items():
 
     p_outcome_given_state = np.zeros((chosen_n, n_outcomes))
     p_cluster_given_state = np.zeros((chosen_n, k))
+    p_streak_given_state = np.zeros((chosen_n, n_streak_bins))
     for s in range(chosen_n):
         for sym in range(n_symbols):
-            c, o = sym // n_outcomes, sym % n_outcomes
+            c = sym // n_outcome_streak
+            os_ = sym % n_outcome_streak
+            o, sb = os_ // n_streak_bins, os_ % n_streak_bins
             p_cluster_given_state[s, c] += emission[s, sym]
             p_outcome_given_state[s, o] += emission[s, sym]
+            p_streak_given_state[s, sb] += emission[s, sym]
 
     aggression = (p_outcome_given_state[:, 3] * 10 + p_outcome_given_state[:, 2] * 5
                   + p_outcome_given_state[:, 1])
@@ -163,6 +183,7 @@ for bowler, k in best_k.items():
 
     p_cluster_given_state = p_cluster_given_state[order]
     p_outcome_given_state = p_outcome_given_state[order]
+    p_streak_given_state = p_streak_given_state[order]
     transmat = model.transmat_[np.ix_(order, order)]
     startprob = model.startprob_[order]
 
@@ -179,6 +200,10 @@ for bowler, k in best_k.items():
     for s in range(chosen_n):
         print(f"  State {s}: " +
               ", ".join(f"{outcome_labels[o]}={p_outcome_given_state[s,o]:.2f}" for o in range(n_outcomes)))
+    print("P(pressure entering ball | state):")
+    for s in range(chosen_n):
+        print(f"  State {s}: " +
+              ", ".join(f"{streak_labels[b]}={p_streak_given_state[s,b]:.2f}" for b in range(n_streak_bins)))
     print("P(cluster | state):")
     for s in range(chosen_n):
         print(f"  State {s}: " + ", ".join(f"C{c}={p_cluster_given_state[s,c]:.2f}" for c in range(k)))
@@ -202,12 +227,13 @@ for bowler, k in best_k.items():
         sub=sub, k=k, chosen_n=chosen_n, bic_scores=bic_scores,
         transmat=transmat, startprob=startprob, lengths=lengths,
         p_outcome=p_outcome_given_state, p_cluster=p_cluster_given_state,
+        p_streak=p_streak_given_state,
         ll=ll, mean_streak=mean_streak,
     )
 
 # ── Figure 1: BIC vs n_states ────────────────────────────────────────────────
 fig, axes = plt.subplots(1, 4, figsize=(16, 3.5))
-fig.suptitle("BIC vs number of hidden strategy states (n_states=5 used despite BIC minimum)",
+fig.suptitle("BIC vs number of hidden strategy states (n_states=4 used despite BIC minimum)",
               fontsize=12, fontweight="bold")
 for ax, bowler in zip(axes, best_k):
     bic_scores = results[bowler]["bic_scores"]
@@ -260,8 +286,8 @@ plt.tight_layout()
 plt.savefig("hmm_timelines.png", dpi=150, bbox_inches="tight")
 print("Saved hmm_timelines.png")
 
-# ── Figure 3: emission profiles P(cluster|state) and P(outcome|state) ────────
-fig, axes = plt.subplots(2, 4, figsize=(18, 7))
+# ── Figure 3: emission profiles P(cluster|state), P(outcome|state), P(pressure|state) ──
+fig, axes = plt.subplots(3, 4, figsize=(18, 9.5))
 fig.suptitle("Emission profiles per hidden state", fontsize=13, fontweight="bold")
 for col, bowler in enumerate(best_k):
     res = results[bowler]
@@ -298,6 +324,20 @@ for col, bowler in enumerate(best_k):
                      color="white" if v > 0.6 else "black")
     if col == 0:
         ax2.set_ylabel("P(outcome | state)")
+
+    ax3 = axes[2, col]
+    im3 = ax3.imshow(res["p_streak"], cmap="Reds", aspect="auto", vmin=0, vmax=1)
+    ax3.set_xticks(range(len(streak_labels)))
+    ax3.set_xticklabels(["Low pressure\n(0-1 prior dots)", "High pressure\n(2+ prior dots)"], fontsize=8)
+    ax3.set_yticks(range(chosen_n))
+    ax3.set_yticklabels([f"State {s}" for s in range(chosen_n)], fontsize=8)
+    for s in range(chosen_n):
+        for b in range(len(streak_labels)):
+            v = res["p_streak"][s, b]
+            ax3.text(b, s, f"{v:.2f}", ha="center", va="center", fontsize=7,
+                     color="white" if v > 0.6 else "black")
+    if col == 0:
+        ax3.set_ylabel("P(pressure entering ball | state)")
 
 plt.tight_layout()
 plt.savefig("hmm_emissions.png", dpi=150, bbox_inches="tight")
