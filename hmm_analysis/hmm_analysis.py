@@ -140,14 +140,13 @@ for bowler, k in best_k.items():
 
     # ── Choose number of hidden "strategy" states ─────────────────────────────
     # BIC is computed for n_states = 2..5 for reference, but we deliberately
-    # use n_states=4 regardless of what BIC prefers — BIC consistently favours
+    # use n_states=3 regardless of what BIC prefers — BIC consistently favours
     # 2 states on this sample size, but 2 states mostly just recovers the
-    # over/round-the-wicket split (see hmm_analysis.md caveats). 4 (rather
-    # than 5, as in earlier versions) is used here because adding the
-    # pressure-streak dimension to the emission alphabet roughly doubles its
-    # size, so a slightly smaller number of states is used to keep the
-    # parameter count more manageable.
-    FORCE_N_STATES = 4
+    # over/round-the-wicket split (see hmm_analysis.md caveats). 3 keeps the
+    # parameter count manageable given the pressure-streak dimension in the
+    # emission alphabet, while still distinguishing more than just "attacking
+    # vs defensive" lines.
+    FORCE_N_STATES = 3
     bic_scores = {}
     fitted_models = {}
     for n_states in [2, 3, 4, 5]:
