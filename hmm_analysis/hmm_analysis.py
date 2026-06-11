@@ -10,6 +10,13 @@ import cluster_defs as CD
 
 df = pd.read_excel("../data/Test_Wicket_Match_Ups.xlsx")
 
+# "Match Start Date" is a mixed-type column in the source file (some rows are
+# Excel datetimes, others are "DD/MM/YYYY" strings). Left as-is, sorting on it
+# does not produce chronological order (datetimes and strings sort separately,
+# each internally consistent but as two disjoint blocks). Normalise to a single
+# datetime dtype so the "chronological order" sort below is actually correct.
+df["Match Start Date"] = pd.to_datetime(df["Match Start Date"], dayfirst=True)
+
 # ── Same per-bowler delivery-type clusters as analysis.py ────────────────────
 # The "ball cluster" feeding the HMM is the *same* over/round-split clustering
 # used for the delivery-type description in analysis.md (see cluster_defs.py),
