@@ -18,7 +18,7 @@ best_k = {bowler: CD.total_k(bowler) for bowler in CD.side_config}
 
 extra_cols = [
     "Bowler Name", "Match ID", "Match Start Date", "Innings ID", "Over No", "Ball No",
-    "Is Wicket", "Bowler Runs Conceded", "Home/Away", "Fielder Action",
+    "Is Wicket", "Bowler Runs Conceded", "Home/Away", "Ball Events",
 ]
 
 # ── Home/away: fill gaps in the Ashes matches via Ground Country ─────────────
@@ -46,16 +46,14 @@ df_clean = df[features + extra_cols].dropna(subset=features).copy()
 df_clean = df_clean[df_clean["Release Speed"] >= 75].copy()
 
 # ── Outcome category: 0=Dot, 1=Runs off bat, 2=Chance, 3=Wicket ──────────────
-# A "chance" is a delivery where a wicket should have happened but didn't -
-# a dropped catch, missed run-out or keeper error (Is Wicket is False for
-# all of these). These are rare (0-4 per bowler) but worth distinguishing
-# from an ordinary non-wicket ball.
-chance_actions = {"Dropped Catch", "Run Out Chance", "Keeper Error"}
-
+# A "chance" is a delivery the bowler beat the bat or found an edge on
+# (Ball Events contains "Edge" or "Catch Chance"), but which didn't result
+# in a wicket this time - i.e. the batter could easily have been out.
 def outcome_cat(row):
     if row["Is Wicket"]:
         return 3
-    if row["Fielder Action"] in chance_actions:
+    events = row["Ball Events"] if pd.notna(row["Ball Events"]) else ""
+    if "Edge" in events or "Catch Chance" in events:
         return 2
     if row["Bowler Runs Conceded"] == 0:
         return 0
